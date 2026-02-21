@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Hand Builder</title>
+    <link rel="stylesheet" href="app-style.css">
+    
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <div id="loader">
+        <div class="spinner"></div>
+        <div id="loader-text">Initialize AI & Camera...</div>
+        <div style="margin-top: 10px; font-size: 12px; color: #64748b;">Please allow camera access when prompted</div>
+    </div>
+
+    <video id="input_video"></video>
+
+    <!-- User Info -->
+    <div id="user-info">
+        <span id="welcome-user">Welcome!</span>
+        <button id="logout-btn">Logout</button>
+    </div>
+
+    <!-- Sidebar Tools -->
+    <div id="ui-container">
+        <h2>
+            <span>🏗️</span> AR Builder
+        </h2>
+        
+        <div class="control-group">
+            <label>Build Mode</label>
+            <select id="buildMode">
+                <option value="free">Free Build</option>
+                <option value="building">Building Blocks</option>
+                <option value="solar">Solar System</option>
+            </select>
+        </div>
+
+        <div class="control-group" id="freeBuildPanel">
+            <label>Block Color</label>
+            <div class="color-wrapper">
+                <input type="color" id="colorPicker" value="#38bdf8">
+            </div>
+        </div>
+
+        <div class="control-group" id="buildingPanel" style="display: none;">
+            <label>Building Parts</label>
+            <div class="building-grid">
+                <button class="building-btn active" data-type="wall">🧱 Wall</button>
+                <button class="building-btn" data-type="window">🪟 Window</button>
+                <button class="building-btn" data-type="door">🚪 Door</button>
+                <button class="building-btn" data-type="roof">🏠 Roof</button>
+                <button class="building-btn" data-type="floor">⬛ Floor</button>
+                <button class="building-btn" data-type="column">🏛️ Column</button>
+                <button class="building-btn" data-type="stairs">🪜 Stairs</button>
+                <button class="building-btn" data-type="balcony">🏗️ Balcony</button>
+            </div>
+            <div id="selectedPart" class="selected-part">Selected: Wall</div>
+        </div>
+
+        <div class="control-group" id="solarPanel" style="display: none;">
+            <label>Solar System Objects</label>
+            <div class="solar-grid">
+                <button class="solar-btn" data-type="sun">☀️ Sun</button>
+                <button class="solar-btn" data-type="mercury">☿ Mercury</button>
+                <button class="solar-btn" data-type="venus">♀ Venus</button>
+                <button class="solar-btn active" data-type="earth">🌍 Earth</button>
+                <button class="solar-btn" data-type="moon">🌙 Moon</button>
+                <button class="solar-btn" data-type="mars">♂ Mars</button>
+                <button class="solar-btn" data-type="jupiter">♃ Jupiter</button>
+                <button class="solar-btn" data-type="saturn">♄ Saturn</button>
+                <button class="solar-btn" data-type="uranus">♅ Uranus</button>
+                <button class="solar-btn" data-type="neptune">♆ Neptune</button>
+                <button class="solar-btn" data-type="asteroid">☄️ Asteroid</button>
+                <button class="solar-btn" data-type="comet">💫 Comet</button>
+            </div>
+            <div id="selectedPlanet" class="selected-part">Selected: Earth</div>
+        </div>
+
+        <div class="control-group">
+            <label>Tools</label>
+            <button id="toggleGrid">Toggle Grid / Rulers</button>
+            <button id="resetCamera">Reset Camera View</button>
+            <button id="clearScene" class="danger">Clear All Blocks</button>
+        </div>
+
+        <div class="control-group">
+            <label>System Status</label>
+            <div id="hand-status">
+                <div class="status-dot" id="status-dot"></div>
+                <span id="status-text">Searching for hand...</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="instructions">
+        <div class="inst-item"><span class="inst-icon">👆</span> 1 Hand: Build</div>
+        <div class="inst-item"><span class="inst-icon">🤏</span> Pinch to Place</div>
+        <div class="inst-item"><span class="inst-icon">🙌</span> 2 Hands: Rotate View</div>
+    </div>
+
+    <script src="auth.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - AI Hand Builder</title>
+    <link rel="stylesheet" href="login-style.css">
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-card">
+            <div class="logo">
+                <span class="logo-icon">🏗️</span>
+                <h1>AI Hand Builder</h1>
+            </div>
+            
+            <p class="tagline">Build in 3D with your hands using AI</p>
+            
+            <form id="loginForm" class="login-form">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" name="username" placeholder="Enter your username" required autocomplete="username">
+                </div>
+                
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" placeholder="Enter your password" required autocomplete="current-password">
+                </div>
+                
+                <div id="error-message" class="error-message"></div>
+                
+                <button type="submit" class="btn-login">
+                    <span id="loginText">Sign In</span>
+                    <span id="loginSpinner" class="spinner hidden"></span>
+                </button>
+            </form>
+            
+            <div class="register-link">
+                Don't have an account? <a href="#" id="registerLink">Register here</a>
+            </div>
+        </div>
+        
+        <div class="background-animation">
+            <div class="cube"></div>
+            <div class="cube"></div>
+            <div class="cube"></div>
+        </div>
+    </div>
+
+    <script src="auth.js"></script>
+</body>
+</html>
