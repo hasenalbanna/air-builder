@@ -80,8 +80,21 @@ class QuickStart3D:
         # Build mode - START IN BUILDING MODE
         self.build_mode = 'building'  # Default to building mode!
         self.selected_building_part = 'wall'
+        self.selected_city_asset = 'road'
         self.selected_solar_object = 'earth'
         self.current_color = [0.22, 0.74, 0.97]
+        
+        # Zone/Area system
+        self.current_zone = 'zone1'
+        self.zone_offset = [0, 0, 0]  # Offset for current zone
+        self.show_zone_selector = False
+        
+        # Grid-based placement system
+        self.grid_size = 2.0  # Each grid cell is 2x2 units
+        self.snap_to_grid = True  # Enable grid snapping by default
+        self.placement_height = 0  # Current height level (0=ground, 1=2 units up, etc.)
+        self.max_height_level = 10  # Maximum 10 levels (20 units high)
+        self.show_placement_grid = True  # Show the placement grid
         
         self.blocks = []
         self.show_grid = True
@@ -96,6 +109,7 @@ class QuickStart3D:
         self.font_tiny = pygame.font.Font(None, 16)
         
         self.ui_buttons = []
+        self.zone_buttons = []
         self.hovered_button = None
         self._build_ui_buttons()
         
@@ -104,8 +118,10 @@ class QuickStart3D:
         print("="*60)
         print("✅ Started in BUILDING MODE")
         print("📱 Camera preview: Top-right corner")
-        print("🖱️  Click buttons on left to select building parts")
+        print("🖱️  Click buttons on left to select parts")
         print("👆 Show your hand to start building!")
+        print("🗺️  9 empty zones ready - click 'TELEPORT TO ZONES' to navigate!")
+        print("🔍 Zoom: Bring 2 hands CLOSER together = Zoom IN")
         print("="*60 + "\n")
         
     def _init_opengl(self):
@@ -198,9 +214,14 @@ class QuickStart3D:
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
                 
                 index_tip = landmarks.landmark[8]
-                x = (1 - index_tip.x) * 20 - 10
-                y = (1 - index_tip.y) * 12 - 4
-                self.target_pos = [x, y, 0]
+                # Expanded movement range: X and Z axes cover full zone (±15 units)
+                # Map hand X (0-1) to world X (-15 to +15) = 30 units range
+                x = (1 - index_tip.x) * 30 - 15
+                # Map hand Y (0-1) to world Z (-15 to +15) = 30 units range (forward/back)
+                z = (index_tip.y - 0.5) * 30
+                # Y stays at current height level for now (controlled by arrow keys)
+                y = self.placement_height * self.grid_size
+                self.target_pos = [x, y, z]
                 
                 index_x, index_y = index_tip.x, index_tip.y
                 pinky_tip = landmarks.landmark[20]
@@ -232,28 +253,60 @@ class QuickStart3D:
         return display_frame
     
     def place_block(self):
-        block_data = {'position': self.cursor_pos.copy(), 'mode': self.build_mode, 'rotation': [0, 0, 0]}
+        # Get snapped position if grid is enabled
+        if self.snap_to_grid:
+            snapped_x = round(self.cursor_pos[0] / self.grid_size) * self.grid_size
+            snapped_z = round(self.cursor_pos[2] / self.grid_size) * self.grid_size
+            snapped_y = self.placement_height * self.grid_size
+        else:
+            snapped_x = self.cursor_pos[0]
+            snapped_z = self.cursor_pos[2]
+            snapped_y = self.cursor_pos[1]
+        
+        # Apply zone offset to placement position
+        adjusted_pos = [
+            snapped_x + self.zone_offset[0],
+            snapped_y + self.zone_offset[1],
+            snapped_z + self.zone_offset[2]
+        ]
+        block_data = {'position': adjusted_pos, 'mode': self.build_mode, 'rotation': [0, 0, 0], 'zone': self.current_zone}
         
         if self.build_mode == 'free':
             block_data['size'] = [self.current_size] * 3
             block_data['color'] = self.current_color.copy()
             block_data['type'] = 'cube'
-            block_data['building_part'] = None
+            block_data['asset_type'] = None
         elif self.build_mode == 'building':
             part = config.BUILDING_PARTS[self.selected_building_part]
             block_data['size'] = list(part['size'])
             block_data['color'] = list(part['color'])
             block_data['type'] = 'building'
-            block_data['building_part'] = self.selected_building_part
+            block_data['asset_type'] = self.selected_building_part
+        elif self.build_mode == 'city':
+            asset = config.CITY_ASSETS[self.selected_city_asset]
+            block_data['size'] = list(asset['size'])
+            block_data['color'] = list(asset['color'])
+            block_data['type'] = 'city'
+            block_data['asset_type'] = self.selected_city_asset
         elif self.build_mode == 'solar':
             obj = config.SOLAR_OBJECTS[self.selected_solar_object]
             block_data['size'] = [obj['radius']]
             block_data['color'] = list(obj['color'])
             block_data['type'] = 'sphere'
-            block_data['building_part'] = None
+            block_data['asset_type'] = None
         
         self.blocks.append(block_data)
-        print(f"✅ Placed {config.BUILDING_PARTS[self.selected_building_part]['name'] if self.build_mode == 'building' else block_data['type']}")
+        
+        # Print placement message
+        if self.build_mode == 'building':
+            print(f"✅ Placed {config.BUILDING_PARTS[self.selected_building_part]['name']}")
+        elif self.build_mode == 'city':
+            asset_name = config.CITY_ASSETS[self.selected_city_asset]['name']
+            print(f"✅ Placed {asset_name}")
+            if self.selected_city_asset == 'sun':
+                print("   ☀️ Sun will emit dynamic lighting!")
+        else:
+            print(f"✅ Placed {block_data['type']}")
     
     def _build_ui_buttons(self):
         self.ui_buttons = []
@@ -279,6 +332,23 @@ class QuickStart3D:
                     'value': part,
                     'type': 'building'
                 })
+        elif self.build_mode == 'city':
+            assets_list = list(config.CITY_ASSETS.keys())
+            for i, asset in enumerate(assets_list):
+                row = i // 2
+                col = i % 2
+                x = x_start + col * (button_width + spacing)
+                y = y_start + row * (button_height + spacing)
+                icons = {'road': '🛣️', 'apartment': '🏢', 'house': '🏠', 'skyscraper': '🏙️',
+                        'shop': '🏪', 'streetlight': '💡', 'bench': '🪑', 'tree': '🌳',
+                        'grass': '🌿', 'fountain': '⛲', 'car': '🚗', 'person': '🧍', 'sun': '☀️'}
+                self.ui_buttons.append({
+                    'rect': pygame.Rect(x, y, button_width, button_height),
+                    'text': config.CITY_ASSETS[asset]['name'],
+                    'icon': icons.get(asset, '📦'),
+                    'value': asset,
+                    'type': 'city'
+                })
         elif self.build_mode == 'solar':
             objects_list = list(config.SOLAR_OBJECTS.keys())
             for i, obj in enumerate(objects_list):
@@ -298,19 +368,85 @@ class QuickStart3D:
                 })
     
     def handle_mouse_click(self, pos):
+        # Check zone buttons first if zone selector is shown
+        if self.show_zone_selector:
+            for button in self.zone_buttons:
+                if button['rect'].collidepoint(pos):
+                    self.teleport_to_zone(button['value'])
+                    self.show_zone_selector = False
+                    return True
+        
+        # Check mode switch buttons first (highest priority)
+        if hasattr(self, 'mode_buttons'):
+            for button in self.mode_buttons:
+                if button['rect'].collidepoint(pos):
+                    self.build_mode = button['value']
+                    self._build_ui_buttons()
+                    print(f"🎮 Switched to {config.BUILD_MODES[self.build_mode]} mode")
+                    return True
+        
+        # Check regular UI buttons (building/city/solar element buttons)
         for button in self.ui_buttons:
             if button['rect'].collidepoint(pos):
                 if button['type'] == 'building':
                     self.selected_building_part = button['value']
                     print(f"🏗️ Selected: {config.BUILDING_PARTS[button['value']]['name']}")
+                elif button['type'] == 'city':
+                    self.selected_city_asset = button['value']
+                    print(f"🏙️ Selected: {config.CITY_ASSETS[button['value']]['name']}")
                 elif button['type'] == 'solar':
                     self.selected_solar_object = button['value']
                     print(f"🌍 Selected: {config.SOLAR_OBJECTS[button['value']]['name']}")
                 return True
+        
+        # Check zones opener button (lower priority)
+        if hasattr(self, 'zones_opener_button') and self.zones_opener_button['rect'].collidepoint(pos):
+            self.show_zone_selector = not self.show_zone_selector
+            print(f"📍 Zone Selector: {'OPENED' if self.show_zone_selector else 'CLOSED'}")
+            return True
+        
         return False
+    
+    def teleport_to_zone(self, zone_name):
+        """Teleport the camera to a different zone/area"""
+        self.current_zone = zone_name
+        zone_data = config.ZONES[zone_name]
+        self.zone_offset = list(zone_data['position'])
+        
+        # Move camera to look at the zone
+        # Reset camera rotation to default view of the zone
+        self.target_camera_rotation_y = 0
+        self.target_camera_rotation_x = 0
+        
+        print(f"📍 Teleported to: {zone_data['name']}")
+        print(f"   Position: {zone_data['position']}")
+        
+        # Count blocks in this zone
+        blocks_in_zone = sum(1 for b in self.blocks if b.get('zone') == zone_name)
+        print(f"   ({blocks_in_zone} objects in this area)")
     
     def handle_mouse_motion(self, pos):
         self.hovered_button = None
+        # Check zone buttons if zone selector is shown
+        if self.show_zone_selector:
+            for button in self.zone_buttons:
+                if button['rect'].collidepoint(pos):
+                    self.hovered_button = button
+                    return
+        
+        # Check zones opener button
+        if hasattr(self, 'zones_opener_button') and self.zones_opener_button['rect'].collidepoint(pos):
+            self.hovered_button = self.zones_opener_button
+            return
+        
+        # Check mode switch buttons
+        if hasattr(self, 'mode_buttons'):
+            for button in self.mode_buttons:
+                if button['rect'].collidepoint(pos):
+                    self.hovered_button = button
+                    return
+        
+        # Check regular UI buttons
         for button in self.ui_buttons:
             if button['rect'].collidepoint(pos):
                 self.hovered_button = button
@@ -320,30 +456,225 @@ class QuickStart3D:
         if not self.show_grid:
             return
         glDisable(GL_LIGHTING)
-        glColor3f(0.3, 0.3, 0.3)
+        
+        # Draw zone boundaries and colored grids for each zone
+        zone_colors = {
+            'zone1': (0.3, 0.5, 0.9),   # Blue - Central Plaza
+            'zone2': (0.9, 0.5, 0.3),   # Orange - East District
+            'zone3': (0.5, 0.3, 0.9),   # Purple - West District
+            'zone4': (0.3, 0.9, 0.3),   # Green - North Park
+            'zone5': (0.9, 0.9, 0.3),   # Yellow - South Beach
+            'zone6': (0.9, 0.3, 0.3),   # Red - NE Industrial
+            'zone7': (0.3, 0.9, 0.9),   # Cyan - NW Residential
+            'zone8': (0.5, 0.9, 0.5),   # Light Green - SE Harbor
+            'zone9': (0.7, 0.5, 0.3)    # Brown - SW Mountain
+        }
+        
+        # Draw colored zone areas
+        for zone_id, zone_data in config.ZONES.items():
+            pos = zone_data['position']
+            color = zone_colors.get(zone_id, (0.3, 0.3, 0.3))
+            
+            # Brighten current zone
+            if zone_id == self.current_zone:
+                color = tuple(min(c * 1.5, 1.0) for c in color)
+            else:
+                color = tuple(c * 0.5 for c in color)
+            
+            # Draw zone floor (semi-transparent)
+            glColor4f(color[0], color[1], color[2], 0.15)
+            glBegin(GL_QUADS)
+            glVertex3f(pos[0] - 12, 0.01, pos[2] - 12)
+            glVertex3f(pos[0] + 12, 0.01, pos[2] - 12)
+            glVertex3f(pos[0] + 12, 0.01, pos[2] + 12)
+            glVertex3f(pos[0] - 12, 0.01, pos[2] + 12)
+            glEnd()
+            
+            # Draw zone boundary lines
+            glColor3f(*color)
+            glLineWidth(3)
+            glBegin(GL_LINE_LOOP)
+            glVertex3f(pos[0] - 12, 0.02, pos[2] - 12)
+            glVertex3f(pos[0] + 12, 0.02, pos[2] - 12)
+            glVertex3f(pos[0] + 12, 0.02, pos[2] + 12)
+            glVertex3f(pos[0] - 12, 0.02, pos[2] + 12)
+            glEnd()
+            
+            # Draw corner markers
+            glPointSize(8)
+            glBegin(GL_POINTS)
+            glVertex3f(pos[0] - 12, 0.02, pos[2] - 12)
+            glVertex3f(pos[0] + 12, 0.02, pos[2] - 12)
+            glVertex3f(pos[0] + 12, 0.02, pos[2] + 12)
+            glVertex3f(pos[0] - 12, 0.02, pos[2] + 12)
+            glEnd()
+        
+        # Draw placement grid (visible and aligned to grid_size)
+        if self.show_placement_grid:
+            glColor3f(0.3, 0.4, 0.5)
+            glLineWidth(1)
+            glBegin(GL_LINES)
+            # Draw grid in current zone
+            zone_x, zone_z = self.zone_offset[0], self.zone_offset[2]
+            grid_range = 12  # +/- 12 from zone center
+            step = int(self.grid_size)
+            for i in range(-grid_range, grid_range + 1, step):
+                # Lines parallel to X axis
+                glVertex3f(zone_x - grid_range, 0.001, zone_z + i)
+                glVertex3f(zone_x + grid_range, 0.001, zone_z + i)
+                # Lines parallel to Z axis
+                glVertex3f(zone_x + i, 0.001, zone_z - grid_range)
+                glVertex3f(zone_x + i, 0.001, zone_z + grid_range)
+            glEnd()
+            
+            # Draw current grid cell highlight
+            if hasattr(self, 'display_cursor_pos'):
+                cx, cy, cz = self.display_cursor_pos
+                half_grid = self.grid_size / 2
+                
+                # Highlight the cell where cursor is
+                glColor4f(0.2, 0.8, 0.2, 0.3)  # Green transparent
+                glBegin(GL_QUADS)
+                glVertex3f(cx - half_grid, cy + 0.01, cz - half_grid)
+                glVertex3f(cx + half_grid, cy + 0.01, cz - half_grid)
+                glVertex3f(cx + half_grid, cy + 0.01, cz + half_grid)
+                glVertex3f(cx - half_grid, cy + 0.01, cz + half_grid)
+                glEnd()
+                
+                # Border of highlighted cell
+                glColor3f(0.2, 1.0, 0.2)
+                glLineWidth(3)
+                glBegin(GL_LINE_LOOP)
+                glVertex3f(cx - half_grid, cy + 0.02, cz - half_grid)
+                glVertex3f(cx + half_grid, cy + 0.02, cz - half_grid)
+                glVertex3f(cx + half_grid, cy + 0.02, cz + half_grid)
+                glVertex3f(cx - half_grid, cy + 0.02, cz + half_grid)
+                glEnd()
+        
+        # Draw fine grid lines (faded) - original background grid
+        glColor3f(0.15, 0.15, 0.15)
+        glLineWidth(1)
         glBegin(GL_LINES)
-        for i in range(-20, 21, 1):
-            glVertex3f(-20, 0, i); glVertex3f(20, 0, i)
-            glVertex3f(i, 0, -20); glVertex3f(i, 0, 20)
+        for i in range(-50, 51, 5):
+            glVertex3f(-50, 0, i); glVertex3f(50, 0, i)
+            glVertex3f(i, 0, -50); glVertex3f(i, 0, 50)
         glEnd()
+        
+        # Draw axis indicators at origin
+        glLineWidth(3)
         glBegin(GL_LINES)
         glColor3f(1, 0, 0); glVertex3f(0, 0, 0); glVertex3f(2, 0, 0)
         glColor3f(0, 1, 0); glVertex3f(0, 0, 0); glVertex3f(0, 2, 0)
         glColor3f(0, 0, 1); glVertex3f(0, 0, 0); glVertex3f(0, 0, 2)
         glEnd()
+        
+        # Draw zone labels as 3D text markers
+        self.draw_zone_labels()
+        
         glEnable(GL_LIGHTING)
     
+    def draw_zone_labels(self):
+        """Draw 3D markers and labels for each zone"""
+        zone_icons = {
+            'zone1': '🏛️', 'zone2': '🏙️', 'zone3': '🌆',
+            'zone4': '🌳', 'zone5': '🏖️', 'zone6': '⚓',
+            'zone7': '🏘️', 'zone8': '🏭', 'zone9': '⛰️'
+        }
+        
+        for zone_id, zone_data in config.ZONES.items():
+            pos = zone_data['position']
+            
+            # Draw a tall pole marker at zone center
+            glDisable(GL_LIGHTING)
+            
+            # Make current zone marker brighter and taller
+            if zone_id == self.current_zone:
+                glColor3f(1.0, 1.0, 0.0)  # Bright yellow
+                marker_height = 8
+                glLineWidth(4)
+            else:
+                glColor3f(0.5, 0.5, 0.5)  # Gray
+                marker_height = 5
+                glLineWidth(2)
+            
+            # Draw vertical marker pole
+            glBegin(GL_LINES)
+            glVertex3f(pos[0], 0, pos[2])
+            glVertex3f(pos[0], marker_height, pos[2])
+            glEnd()
+            
+            # Draw marker top (small pyramid)
+            glBegin(GL_TRIANGLES)
+            # 4 sides of pyramid
+            glVertex3f(pos[0], marker_height + 1, pos[2])
+            glVertex3f(pos[0] - 0.5, marker_height, pos[2] - 0.5)
+            glVertex3f(pos[0] + 0.5, marker_height, pos[2] - 0.5)
+            
+            glVertex3f(pos[0], marker_height + 1, pos[2])
+            glVertex3f(pos[0] + 0.5, marker_height, pos[2] - 0.5)
+            glVertex3f(pos[0] + 0.5, marker_height, pos[2] + 0.5)
+            
+            glVertex3f(pos[0], marker_height + 1, pos[2])
+            glVertex3f(pos[0] + 0.5, marker_height, pos[2] + 0.5)
+            glVertex3f(pos[0] - 0.5, marker_height, pos[2] + 0.5)
+            
+            glVertex3f(pos[0], marker_height + 1, pos[2])
+            glVertex3f(pos[0] - 0.5, marker_height, pos[2] + 0.5)
+            glVertex3f(pos[0] - 0.5, marker_height, pos[2] - 0.5)
+            glEnd()
+            
+            glEnable(GL_LIGHTING)
+    
     def draw_cursor(self):
+        # Use snapped position for cursor display
+        cursor_display = self.display_cursor_pos if hasattr(self, 'display_cursor_pos') else self.cursor_pos
+        
         glPushMatrix()
-        glTranslatef(*self.cursor_pos)
+        glTranslatef(*cursor_display)
         if self.build_mode == 'building':
             color = config.BUILDING_PARTS[self.selected_building_part]['color']
+        elif self.build_mode == 'city':
+            color = config.CITY_ASSETS[self.selected_city_asset]['color']
         elif self.build_mode == 'solar':
             color = config.SOLAR_OBJECTS[self.selected_solar_object]['color']
         else:
             color = self.current_color
-        glColor4f(*color, 0.5)
-        self.draw_wireframe_cube(1)
+        
+        # Draw bright wireframe cursor
+        glDisable(GL_LIGHTING)
+        glLineWidth(3)
+        glColor3f(*color)
+        
+        # Draw wireframe box
+        s = 0.5
+        glBegin(GL_LINES)
+        # Bottom face
+        glVertex3f(-s, -s, s); glVertex3f(s, -s, s)
+        glVertex3f(s, -s, s); glVertex3f(s, -s, -s)
+        glVertex3f(s, -s, -s); glVertex3f(-s, -s, -s)
+        glVertex3f(-s, -s, -s); glVertex3f(-s, -s, s)
+        # Top face
+        glVertex3f(-s, s, s); glVertex3f(s, s, s)
+        glVertex3f(s, s, s); glVertex3f(s, s, -s)
+        glVertex3f(s, s, -s); glVertex3f(-s, s, -s)
+        glVertex3f(-s, s, -s); glVertex3f(-s, s, s)
+        # Vertical edges
+        glVertex3f(-s, -s, s); glVertex3f(-s, s, s)
+        glVertex3f(s, -s, s); glVertex3f(s, s, s)
+        glVertex3f(s, -s, -s); glVertex3f(s, s, -s)
+        glVertex3f(-s, -s, -s); glVertex3f(-s, s, -s)
+        glEnd()
+        
+        # Draw center crosshair
+        glColor3f(1, 1, 0)  # Yellow
+        glBegin(GL_LINES)
+        glVertex3f(-0.8, 0, 0); glVertex3f(0.8, 0, 0)
+        glVertex3f(0, -0.8, 0); glVertex3f(0, 0.8, 0)
+        glVertex3f(0, 0, -0.8); glVertex3f(0, 0, 0.8)
+        glEnd()
+        
+        glLineWidth(1)
+        glEnable(GL_LIGHTING)
         glPopMatrix()
     
     def draw_wireframe_cube(self, size):
@@ -376,8 +707,10 @@ class QuickStart3D:
             glTranslatef(*block['position'])
             glColor3fv(block['color'])
             
-            if block['type'] == 'building' and block.get('building_part'):
-                self.draw_building_part(block['building_part'], block['size'])
+            if block['type'] == 'building' and block.get('asset_type'):
+                self.draw_building_part(block['asset_type'], block['size'])
+            elif block['type'] == 'city' and block.get('asset_type'):
+                self.draw_city_asset(block['asset_type'], block['size'])
             elif block['type'] == 'sphere':
                 quadric = gluNewQuadric()
                 gluSphere(quadric, block['size'][0], 20, 20)
@@ -677,12 +1010,327 @@ class QuickStart3D:
         glVertex3f(w/2-rail_thickness, h+rail_height, d/2)
         glEnd()
     
+    def draw_city_asset(self, asset_name, size):
+        """Draw specific 3D shape for each city asset"""
+        if asset_name == 'road':
+            self.draw_road(size)
+        elif asset_name == 'apartment':
+            self.draw_apartment(size)
+        elif asset_name == 'house':
+            self.draw_house(size)
+        elif asset_name == 'skyscraper':
+            self.draw_skyscraper(size)
+        elif asset_name == 'shop':
+            self.draw_shop(size)
+        elif asset_name == 'streetlight':
+            self.draw_streetlight(size)
+        elif asset_name == 'bench':
+            self.draw_bench(size)
+        elif asset_name == 'tree':
+            self.draw_tree(size)
+        elif asset_name == 'grass':
+            self.draw_grass(size)
+        elif asset_name == 'fountain':
+            self.draw_fountain(size)
+        elif asset_name == 'car':
+            self.draw_car(size)
+        elif asset_name == 'person':
+            self.draw_person(size)
+        elif asset_name == 'sun':
+            self.draw_sun(size)
+        else:
+            self.draw_cube(size[0])
+    
+    def draw_road(self, size):
+        """Draw a road segment"""
+        w, h, d = size
+        glBegin(GL_QUADS)
+        # Top surface with road markings
+        glNormal3f(0, 1, 0)
+        glVertex3f(-w/2, h, -d/2); glVertex3f(-w/2, h, d/2)
+        glVertex3f(w/2, h, d/2); glVertex3f(w/2, h, -d/2)
+        glEnd()
+        # Road lines (white)
+        glColor3f(1, 1, 1)
+        glBegin(GL_QUADS)
+        glVertex3f(-0.1, h+0.01, -d/2); glVertex3f(-0.1, h+0.01, d/2)
+        glVertex3f(0.1, h+0.01, d/2); glVertex3f(0.1, h+0.01, -d/2)
+        glEnd()
+    
+    def draw_apartment(self, size):
+        """Draw an apartment building"""
+        w, h, d = size
+        # Main building
+        self.draw_cube(w)
+        # Windows (darker)
+        glColor3f(0.3, 0.5, 0.7)
+        for floor in range(5):
+            for col in range(3):
+                y_pos = -h/2 + 0.5 + floor * 0.8
+                x_pos = -w/2 + 0.5 + col * 0.8
+                glPushMatrix()
+                glTranslatef(x_pos, y_pos, w/2 + 0.01)
+                glBegin(GL_QUADS)
+                glVertex3f(-0.2, -0.3, 0); glVertex3f(0.2, -0.3, 0)
+                glVertex3f(0.2, 0.3, 0); glVertex3f(-0.2, 0.3, 0)
+                glEnd()
+                glPopMatrix()
+    
+    def draw_house(self, size):
+        """Draw a residential house"""
+        w, h, d = size
+        # Base (cube)
+        glPushMatrix()
+        glTranslatef(0, -h*0.2, 0)
+        self.draw_cube(w * 0.8)
+        glPopMatrix()
+        # Roof (pyramid)
+        glBegin(GL_TRIANGLES)
+        glNormal3f(0, 1, 0)
+        glVertex3f(-w/2, h/2, -d/2); glVertex3f(w/2, h/2, -d/2); glVertex3f(0, h, 0)
+        glVertex3f(-w/2, h/2, d/2); glVertex3f(0, h, 0); glVertex3f(w/2, h/2, d/2)
+        glVertex3f(-w/2, h/2, -d/2); glVertex3f(0, h, 0); glVertex3f(-w/2, h/2, d/2)
+        glVertex3f(w/2, h/2, -d/2); glVertex3f(w/2, h/2, d/2); glVertex3f(0, h, 0)
+        glEnd()
+    
+    def draw_skyscraper(self, size):
+        """Draw a tall skyscraper"""
+        w, h, d = size
+        # Main tower (elongated cube) - draw all 4 sides + top + bottom
+        glBegin(GL_QUADS)
+        # Front
+        glNormal3f(0, 0, 1)
+        glVertex3f(-w/2, 0, d/2); glVertex3f(w/2, 0, d/2)
+        glVertex3f(w/2, h, d/2); glVertex3f(-w/2, h, d/2)
+        # Back
+        glNormal3f(0, 0, -1)
+        glVertex3f(-w/2, 0, -d/2); glVertex3f(-w/2, h, -d/2)
+        glVertex3f(w/2, h, -d/2); glVertex3f(w/2, 0, -d/2)
+        # Left
+        glNormal3f(-1, 0, 0)
+        glVertex3f(-w/2, 0, -d/2); glVertex3f(-w/2, 0, d/2)
+        glVertex3f(-w/2, h, d/2); glVertex3f(-w/2, h, -d/2)
+        # Right
+        glNormal3f(1, 0, 0)
+        glVertex3f(w/2, 0, -d/2); glVertex3f(w/2, h, -d/2)
+        glVertex3f(w/2, h, d/2); glVertex3f(w/2, 0, d/2)
+        # Top
+        glNormal3f(0, 1, 0)
+        glVertex3f(-w/2, h, -d/2); glVertex3f(-w/2, h, d/2)
+        glVertex3f(w/2, h, d/2); glVertex3f(w/2, h, -d/2)
+        # Bottom
+        glNormal3f(0, -1, 0)
+        glVertex3f(-w/2, 0, -d/2); glVertex3f(w/2, 0, -d/2)
+        glVertex3f(w/2, 0, d/2); glVertex3f(-w/2, 0, d/2)
+        glEnd()
+    
+    def draw_shop(self, size):
+        """Draw a small shop"""
+        w, h, d = size
+        self.draw_cube(w)
+        # Awning
+        glColor3f(0.9, 0.2, 0.2)
+        glBegin(GL_QUADS)
+        glVertex3f(-w/2-0.2, h/2, d/2); glVertex3f(w/2+0.2, h/2, d/2)
+        glVertex3f(w/2+0.2, h/2-0.3, d/2+0.3); glVertex3f(-w/2-0.2, h/2-0.3, d/2+0.3)
+        glEnd()
+    
+    def draw_streetlight(self, size):
+        """Draw a street light"""
+        w, h, d = size
+        # Pole
+        quadric = gluNewQuadric()
+        glPushMatrix()
+        glRotatef(-90, 1, 0, 0)
+        gluCylinder(quadric, 0.1, 0.1, h, 8, 1)
+        glPopMatrix()
+        # Light (sphere on top)
+        glPushMatrix()
+        glTranslatef(0, h, 0)
+        gluSphere(quadric, 0.3, 10, 10)
+        glPopMatrix()
+        gluDeleteQuadric(quadric)
+    
+    def draw_bench(self, size):
+        """Draw a park bench"""
+        w, h, d = size
+        # Seat
+        glBegin(GL_QUADS)
+        glNormal3f(0, 1, 0)
+        glVertex3f(-w/2, h, -d/2); glVertex3f(-w/2, h, d/2)
+        glVertex3f(w/2, h, d/2); glVertex3f(w/2, h, -d/2)
+        glEnd()
+        # Back rest
+        glBegin(GL_QUADS)
+        glVertex3f(-w/2, h, -d/2); glVertex3f(-w/2, h+0.4, -d/2-0.1)
+        glVertex3f(w/2, h+0.4, -d/2-0.1); glVertex3f(w/2, h, -d/2)
+        glEnd()
+    
+    def draw_tree(self, size):
+        """Draw a tree"""
+        w, h, d = size
+        # Trunk (brown)
+        glColor3f(0.4, 0.25, 0.1)
+        quadric = gluNewQuadric()
+        glPushMatrix()
+        glRotatef(-90, 1, 0, 0)
+        gluCylinder(quadric, 0.2, 0.15, h*0.6, 8, 1)
+        glPopMatrix()
+        # Foliage (green sphere)
+        glColor3f(0.13, 0.55, 0.13)
+        glPushMatrix()
+        glTranslatef(0, h*0.7, 0)
+        gluSphere(quadric, 0.8, 12, 12)
+        glPopMatrix()
+        gluDeleteQuadric(quadric)
+    
+    def draw_grass(self, size):
+        """Draw grass patch"""
+        w, h, d = size
+        glBegin(GL_QUADS)
+        glNormal3f(0, 1, 0)
+        glVertex3f(-w/2, h, -d/2); glVertex3f(-w/2, h, d/2)
+        glVertex3f(w/2, h, d/2); glVertex3f(w/2, h, -d/2)
+        glEnd()
+    
+    def draw_fountain(self, size):
+        """Draw a fountain"""
+        w, h, d = size
+        # Base
+        quadric = gluNewQuadric()
+        glPushMatrix()
+        glRotatef(-90, 1, 0, 0)
+        gluCylinder(quadric, w/2, w/2, h*0.3, 16, 1)
+        glPopMatrix()
+        # Central column
+        glPushMatrix()
+        glTranslatef(0, h*0.3, 0)
+        glRotatef(-90, 1, 0, 0)
+        gluCylinder(quadric, 0.2, 0.2, h*0.5, 8, 1)
+        glPopMatrix()
+        # Top sphere
+        glPushMatrix()
+        glTranslatef(0, h, 0)
+        gluSphere(quadric, 0.4, 12, 12)
+        glPopMatrix()
+        gluDeleteQuadric(quadric)
+    
+    def draw_car(self, size):
+        """Draw a simple car"""
+        w, h, d = size
+        # Body
+        glBegin(GL_QUADS)
+        # Bottom
+        glVertex3f(-w/2, 0, -d/2); glVertex3f(w/2, 0, -d/2)
+        glVertex3f(w/2, 0, d/2); glVertex3f(-w/2, 0, d/2)
+        # Top
+        glVertex3f(-w/2, h, -d/2); glVertex3f(-w/2, h, d/2)
+        glVertex3f(w/2, h, d/2); glVertex3f(w/2, h, -d/2)
+        # Sides
+        glVertex3f(-w/2, 0, d/2); glVertex3f(w/2, 0, d/2)
+        glVertex3f(w/2, h, d/2); glVertex3f(-w/2, h, d/2)
+        glVertex3f(-w/2, 0, -d/2); glVertex3f(-w/2, h, -d/2)
+        glVertex3f(w/2, h, -d/2); glVertex3f(w/2, 0, -d/2)
+        glEnd()
+        # Wheels (black)
+        glColor3f(0.1, 0.1, 0.1)
+        quadric = gluNewQuadric()
+        for pos in [(-w/3, 0.2, d/2+0.1), (w/3, 0.2, d/2+0.1), (-w/3, 0.2, -d/2-0.1), (w/3, 0.2, -d/2-0.1)]:
+            glPushMatrix()
+            glTranslatef(*pos)
+            gluSphere(quadric, 0.2, 8, 8)
+            glPopMatrix()
+        gluDeleteQuadric(quadric)
+    
+    def draw_person(self, size):
+        """Draw a simple person figure"""
+        w, h, d = size
+        quadric = gluNewQuadric()
+        # Body (cylinder)
+        glPushMatrix()
+        glRotatef(-90, 1, 0, 0)
+        gluCylinder(quadric, w/2, w/2, h*0.6, 8, 1)
+        glPopMatrix()
+        # Head (sphere)
+        glPushMatrix()
+        glTranslatef(0, h*0.85, 0)
+        gluSphere(quadric, w/2, 10, 10)
+        glPopMatrix()
+        gluDeleteQuadric(quadric)
+    
+    def draw_sun(self, size):
+        """Draw a bright sun with rays"""
+        w, h, d = size
+        quadric = gluNewQuadric()
+        
+        # Enable emission for glowing effect
+        glMaterialfv(GL_FRONT_AND_BACK, GL_EMISSION, (0.8, 0.7, 0.2, 1.0))
+        
+        # Main sun sphere (bright yellow/orange)
+        glPushMatrix()
+        gluSphere(quadric, w, 20, 20)
+        glPopMatrix()
+        
+        # Reset emission
+        glMaterialfv(GL_FRONT_AND_BACK, GL_EMISSION, (0.0, 0.0, 0.0, 1.0))
+        
+        # Sun rays (lines radiating outward)
+        glDisable(GL_LIGHTING)
+        glColor3f(1.0, 0.95, 0.3)
+        glLineWidth(3)
+        glBegin(GL_LINES)
+        for angle in range(0, 360, 30):
+            rad = angle * 3.14159 / 180
+            # Horizontal rays
+            glVertex3f(w * 1.2 * math.cos(rad), 0, w * 1.2 * math.sin(rad))
+            glVertex3f(w * 1.8 * math.cos(rad), 0, w * 1.8 * math.sin(rad))
+            # Vertical rays
+            glVertex3f(0, w * 1.2 * math.cos(rad), w * 1.2 * math.sin(rad))
+            glVertex3f(0, w * 1.8 * math.cos(rad), w * 1.8 * math.sin(rad))
+        glEnd()
+        glEnable(GL_LIGHTING)
+        
+        gluDeleteQuadric(quadric)
+    
+    def _update_dynamic_lighting(self):
+        """Update lighting based on sun positions"""
+        # Find all sun objects
+        sun_blocks = [b for b in self.blocks if b.get('asset_type') == 'sun']
+        
+        # Disable additional lights first
+        for i in range(1, 8):
+            glDisable(GL_LIGHT0 + i)
+        
+        # Enable lights for each sun (up to 7 additional lights)
+        for i, sun in enumerate(sun_blocks[:7]):
+            light_id = GL_LIGHT0 + i + 1  # Use LIGHT1-LIGHT7
+            sun_pos = sun['position']
+            
+            glEnable(light_id)
+            # Position the light at the sun's location
+            glLightfv(light_id, GL_POSITION, (sun_pos[0], sun_pos[1], sun_pos[2], 1.0))
+            # Bright yellow/orange light
+            glLightfv(light_id, GL_AMBIENT, (0.3, 0.25, 0.1, 1.0))
+            glLightfv(light_id, GL_DIFFUSE, (1.0, 0.9, 0.5, 1.0))
+            glLightfv(light_id, GL_SPECULAR, (1.0, 1.0, 0.8, 1.0))
+    
     def render_3d_scene(self):
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glLoadIdentity()
         
+        # Update cursor position with smooth interpolation
         for i in range(3):
             self.cursor_pos[i] += (self.target_pos[i] - self.cursor_pos[i]) * 0.15
+        
+        # Snap cursor to grid if enabled (for visual feedback)
+        if self.snap_to_grid:
+            self.display_cursor_pos = [
+                round(self.cursor_pos[0] / self.grid_size) * self.grid_size,
+                self.placement_height * self.grid_size,
+                round(self.cursor_pos[2] / self.grid_size) * self.grid_size
+            ]
+        else:
+            self.display_cursor_pos = self.cursor_pos.copy()
         
         # Always update camera rotation and zoom smoothly
         self.camera_rotation_y += (self.target_camera_rotation_y - self.camera_rotation_y) * 0.1
@@ -690,15 +1338,20 @@ class QuickStart3D:
         self.camera_distance += (self.target_camera_distance - self.camera_distance) * 0.1
         
         # Apply camera position with current rotation and zoom
-        cam_x = math.sin(self.camera_rotation_y) * self.camera_distance
-        cam_z = math.cos(self.camera_rotation_y) * self.camera_distance
+        # Camera looks at current zone position
+        zone_pos = self.zone_offset
+        cam_x = zone_pos[0] + math.sin(self.camera_rotation_y) * self.camera_distance
+        cam_z = zone_pos[2] + math.cos(self.camera_rotation_y) * self.camera_distance
         cam_y = 5 + math.sin(self.camera_rotation_x) * 5
-        gluLookAt(cam_x, cam_y, cam_z, 0, 0, 0, 0, 1, 0)
+        gluLookAt(cam_x, cam_y, cam_z, zone_pos[0], 0, zone_pos[2], 0, 1, 0)
+        
+        # Dynamic lighting from sun objects
+        self._update_dynamic_lighting()
         
         self.draw_grid()
         self.draw_blocks()
-        if not self.is_rotating_camera:
-            self.draw_cursor()
+        # Always show cursor (even during rotation for better visibility)
+        self.draw_cursor()
     
     def draw_ui_overlay(self, camera_frame):
         glEnable(GL_BLEND)
@@ -770,17 +1423,100 @@ class QuickStart3D:
         
         # Render text using pygame surfaces converted to OpenGL
         y_offset = 10
-        self._draw_text(f"Mode: {config.BUILD_MODES[self.build_mode]}", 10, y_offset, self.font, (56, 189, 248))
-        y_offset += 35
+        
+        # Mode title with better styling
+        self._draw_text("MODE:", 10, y_offset, self.font_small, (148, 163, 184))
+        y_offset += 25
+        
+        # Mode switching buttons - larger and more prominent
+        mode_buttons_data = [
+            {'key': '1', 'mode': 'free', 'label': 'FREE', 'icon': '🆓'},
+            {'key': '2', 'mode': 'building', 'label': 'BUILD', 'icon': '🏗️'},
+            {'key': '3', 'mode': 'city', 'label': 'CITY', 'icon': '🏙️'},
+            {'key': '4', 'mode': 'solar', 'label': 'SPACE', 'icon': '🌌'}
+        ]
+        
+        # Clear mode buttons list
+        self.mode_buttons = []
+        
+        mode_btn_x = 10
+        mode_btn_width = 55
+        mode_btn_height = 50
+        mode_btn_spacing = 8
+        
+        for btn_data in mode_buttons_data:
+            is_active = self.build_mode == btn_data['mode']
+            is_hovered = False
+            if self.hovered_button and self.hovered_button.get('type') == 'mode_switch':
+                is_hovered = self.hovered_button.get('value') == btn_data['mode']
+            
+            # Button background with gradient effect
+            if is_active:
+                bg_color = (0.22, 0.74, 0.97, 1.0)
+                text_color = (255, 255, 255)
+                icon_y_offset = 8
+            elif is_hovered:
+                bg_color = (0.35, 0.40, 0.50, 1.0)
+                text_color = (255, 255, 255)
+                icon_y_offset = 8
+            else:
+                bg_color = (0.118, 0.161, 0.231, 0.9)
+                text_color = (148, 163, 184)
+                icon_y_offset = 8
+            
+            glColor4f(*bg_color)
+            glBegin(GL_QUADS)
+            glVertex2f(mode_btn_x, y_offset)
+            glVertex2f(mode_btn_x + mode_btn_width, y_offset)
+            glVertex2f(mode_btn_x + mode_btn_width, y_offset + mode_btn_height)
+            glVertex2f(mode_btn_x, y_offset + mode_btn_height)
+            glEnd()
+            
+            # Button border - thicker for active
+            border_color = (0.22, 0.74, 0.97, 1.0) if is_active else (0.39, 0.45, 0.55, 1.0)
+            glColor4f(*border_color)
+            glLineWidth(4 if is_active else 2)
+            glBegin(GL_LINE_LOOP)
+            glVertex2f(mode_btn_x, y_offset)
+            glVertex2f(mode_btn_x + mode_btn_width, y_offset)
+            glVertex2f(mode_btn_x + mode_btn_width, y_offset + mode_btn_height)
+            glVertex2f(mode_btn_x, y_offset + mode_btn_height)
+            glEnd()
+            
+            # Icon centered at top
+            self._draw_text(btn_data['icon'], mode_btn_x + 15, y_offset + icon_y_offset, self.font, text_color)
+            # Key number bottom center (smaller)
+            self._draw_text(f"{btn_data['key']}", mode_btn_x + 22, y_offset + 32, self.font_tiny, text_color)
+            
+            # Store button for click detection
+            btn_rect = pygame.Rect(mode_btn_x, y_offset, mode_btn_width, mode_btn_height)
+            self.mode_buttons.append({
+                'rect': btn_rect,
+                'value': btn_data['mode'],
+                'type': 'mode_switch'
+            })
+            
+            mode_btn_x += mode_btn_width + mode_btn_spacing
+        
+        y_offset += 60
+        
+        # Separator line
+        glColor4f(0.39, 0.45, 0.55, 0.5)
+        glLineWidth(2)
+        glBegin(GL_LINES)
+        glVertex2f(10, y_offset)
+        glVertex2f(240, y_offset)
+        glEnd()
+        y_offset += 15
         
         if self.detection_confidence > 0:
             status_color = (34, 197, 94) if self.detection_confidence > 0.6 else (239, 68, 68)
-            status_text = "Hand Detected" if not self.is_rotating_camera else "Rotate & Zoom Mode"
+            status_text = "✋ Hand Detected" if not self.is_rotating_camera else "🔄 Rotate & Zoom Mode"
         else:
             status_color = (239, 68, 68)
-            status_text = "No Hand Detected"
+            status_text = "❌ No Hand Detected"
         self._draw_text(status_text, 10, y_offset, self.font_small, status_color)
-        y_offset += 30
+        y_offset += 25
         
         # Show zoom level
         zoom_pct = int((25 - self.camera_distance) / 20 * 100)
@@ -789,10 +1525,64 @@ class QuickStart3D:
         
         lighting_color = {"Good": (34, 197, 94), "Fair": (234, 179, 8), "Poor": (239, 68, 68)}.get(self.lighting_quality, (255, 255, 255))
         self._draw_text(f"Light: {self.lighting_quality} ({int(self.avg_brightness)})", 10, y_offset, self.font_small, lighting_color)
-        y_offset += 35
+        y_offset += 30
+        
+        # Grid and height info
+        grid_status = "✅ ON" if self.snap_to_grid else "❌ OFF"
+        grid_color = (34, 197, 94) if self.snap_to_grid else (148, 163, 184)
+        self._draw_text(f"Grid Snap [{grid_status}]", 10, y_offset, self.font_small, grid_color)
+        y_offset += 20
+        
+        height_text = f"Height: Lvl {self.placement_height} ({self.placement_height * self.grid_size:.0f}m)"
+        self._draw_text(height_text, 10, y_offset, self.font_small, (255, 200, 50))
+        y_offset += 25
+        
+        # Zone info and button
+        zone_name = config.ZONES[self.current_zone]['name']
+        self._draw_text(f"Zone: {zone_name}", 10, y_offset, self.font_small, (148, 163, 184))
+        y_offset += 30
+        
+        # ZONES button (always visible)
+        zones_button_rect = pygame.Rect(10, y_offset, 230, 45)
+        is_zones_hovered = self.hovered_button and self.hovered_button.get('type') == 'zones_opener'
+        zones_bg = (0.22, 0.74, 0.97, 1.0) if is_zones_hovered else (0.118, 0.161, 0.231, 0.9)
+        
+        glColor4f(*zones_bg)
+        glBegin(GL_QUADS)
+        glVertex2f(zones_button_rect.left, zones_button_rect.top)
+        glVertex2f(zones_button_rect.right, zones_button_rect.top)
+        glVertex2f(zones_button_rect.right, zones_button_rect.bottom)
+        glVertex2f(zones_button_rect.left, zones_button_rect.bottom)
+        glEnd()
+        
+        glColor4f(0.22, 0.74, 0.97, 1.0)
+        glLineWidth(3)
+        glBegin(GL_LINE_LOOP)
+        glVertex2f(zones_button_rect.left, zones_button_rect.top)
+        glVertex2f(zones_button_rect.right, zones_button_rect.top)
+        glVertex2f(zones_button_rect.right, zones_button_rect.bottom)
+        glVertex2f(zones_button_rect.left, zones_button_rect.bottom)
+        glEnd()
+        
+        zones_text_color = (0, 0, 0) if is_zones_hovered else (56, 189, 248)
+        self._draw_text("📍 TELEPORT TO ZONES", zones_button_rect.centerx - 85, zones_button_rect.centery - 10, self.font, zones_text_color)
+        
+        # Store zones button for click detection
+        if not hasattr(self, 'zones_opener_button'):
+            self.zones_opener_button = {'rect': zones_button_rect, 'type': 'zones_opener'}
+        else:
+            self.zones_opener_button['rect'] = zones_button_rect
+        
+        y_offset += 70  # Increased spacing to prevent overlap
         
         if self.build_mode == 'building':
-            self._draw_text(f"Selected: {config.BUILDING_PARTS[self.selected_building_part]['name']}", 10, y_offset, self.font, (255, 255, 0))
+            # Section header with icon
+            self._draw_text("🏗️ BUILDING PARTS", 10, y_offset, self.font, (56, 189, 248))
+            y_offset += 25
+            
+            # Selected item display
+            selected_name = config.BUILDING_PARTS[self.selected_building_part]['name']
+            self._draw_text(f"Selected: {selected_name}", 10, y_offset, self.font_small, (255, 255, 0))
             y_offset += 30
             
             # Separator line
@@ -802,13 +1592,114 @@ class QuickStart3D:
             glVertex2f(10, y_offset)
             glVertex2f(240, y_offset)
             glEnd()
-            y_offset += 10
-            
-            self._draw_text("BUILDING PARTS:", 10, y_offset, self.font_small, (255, 255, 255))
-            y_offset += 25
+            y_offset += 15
             
             for button in self.ui_buttons:
                 is_selected = button['value'] == self.selected_building_part
+                is_hovered = self.hovered_button == button
+                if is_selected:
+                    bg_color = (0.22, 0.74, 0.97, 1.0)
+                    text_color = (0, 0, 0)
+                elif is_hovered:
+                    bg_color = (0.39, 0.45, 0.55, 1.0)
+                    text_color = (255, 255, 255)
+                else:
+                    bg_color = (0.118, 0.161, 0.231, 0.9)
+                    text_color = (203, 213, 225)
+                
+                rect = button['rect']
+                glColor4f(*bg_color)
+                glBegin(GL_QUADS)
+                glVertex2f(rect.left, rect.top)
+                glVertex2f(rect.right, rect.top)
+                glVertex2f(rect.right, rect.bottom)
+                glVertex2f(rect.left, rect.bottom)
+                glEnd()
+                
+                glColor4f(0.59, 0.59, 0.59, 1.0)
+                glLineWidth(2)
+                glBegin(GL_LINE_LOOP)
+                glVertex2f(rect.left, rect.top)
+                glVertex2f(rect.right, rect.top)
+                glVertex2f(rect.right, rect.bottom)
+                glVertex2f(rect.left, rect.bottom)
+                glEnd()
+                
+                self._draw_text(f"{button['icon']} {button['text']}", rect.centerx - 35, rect.centery - 8, self.font_tiny, text_color)
+        
+        elif self.build_mode == 'city':
+            # Section header with icon
+            self._draw_text("🏙️ CITY BUILDER", 10, y_offset, self.font, (56, 189, 248))
+            y_offset += 25
+            
+            # Selected item display
+            selected_name = config.CITY_ASSETS[self.selected_city_asset]['name']
+            self._draw_text(f"Selected: {selected_name}", 10, y_offset, self.font_small, (255, 255, 0))
+            y_offset += 30
+            
+            # Separator line
+            glColor4f(0.39, 0.45, 0.55, 1.0)
+            glLineWidth(2)
+            glBegin(GL_LINES)
+            glVertex2f(10, y_offset)
+            glVertex2f(240, y_offset)
+            glEnd()
+            y_offset += 15
+            
+            for button in self.ui_buttons:
+                is_selected = button['value'] == self.selected_city_asset
+                is_hovered = self.hovered_button == button
+                if is_selected:
+                    bg_color = (0.22, 0.74, 0.97, 1.0)
+                    text_color = (0, 0, 0)
+                elif is_hovered:
+                    bg_color = (0.39, 0.45, 0.55, 1.0)
+                    text_color = (255, 255, 255)
+                else:
+                    bg_color = (0.118, 0.161, 0.231, 0.9)
+                    text_color = (203, 213, 225)
+                
+                rect = button['rect']
+                glColor4f(*bg_color)
+                glBegin(GL_QUADS)
+                glVertex2f(rect.left, rect.top)
+                glVertex2f(rect.right, rect.top)
+                glVertex2f(rect.right, rect.bottom)
+                glVertex2f(rect.left, rect.bottom)
+                glEnd()
+                
+                glColor4f(0.59, 0.59, 0.59, 1.0)
+                glLineWidth(2)
+                glBegin(GL_LINE_LOOP)
+                glVertex2f(rect.left, rect.top)
+                glVertex2f(rect.right, rect.top)
+                glVertex2f(rect.right, rect.bottom)
+                glVertex2f(rect.left, rect.bottom)
+                glEnd()
+                
+                self._draw_text(f"{button['icon']} {button['text']}", rect.centerx - 35, rect.centery - 8, self.font_tiny, text_color)
+        
+        elif self.build_mode == 'solar':
+            # Section header with icon
+            self._draw_text("🌌 SOLAR SYSTEM", 10, y_offset, self.font, (56, 189, 248))
+            y_offset += 25
+            
+            # Selected item display
+            selected_name = config.SOLAR_OBJECTS[self.selected_solar_object]['name']
+            self._draw_text(f"Selected: {selected_name}", 10, y_offset, self.font_small, (255, 255, 0))
+            y_offset += 30
+            
+            # Separator line
+            glColor4f(0.39, 0.45, 0.55, 1.0)
+            glLineWidth(2)
+            glBegin(GL_LINES)
+            glVertex2f(10, y_offset)
+            glVertex2f(240, y_offset)
+            glEnd()
+            y_offset += 15
+            
+            for button in self.ui_buttons:
+                is_selected = button['value'] == self.selected_solar_object
                 is_hovered = self.hovered_button == button
                 if is_selected:
                     bg_color = (0.22, 0.74, 0.97, 1.0)
@@ -844,14 +1735,167 @@ class QuickStart3D:
         self._draw_text("Camera Feed", cam_x, cam_y - 20, self.font_small, (255, 255, 255))
         
         # Bottom help text
-        y_offset = self.screen_height - 140
-        help_texts = ["CONTROLS:", "1 Hand: Index = Move | Pinch = Place", "2 Hands: Rotate camera & Zoom (closer = zoom in)", 
-                     "Click buttons | Keys: 1/2/3 = Mode | G = Grid | C = Clear | Q = Quit"]
+        y_offset = self.screen_height - 165
+        help_texts = ["CONTROLS:", "1 Hand: Index = Move | Pinch = Place", 
+                     "2 Hands: Rotate | Zoom: Hands CLOSER = Zoom IN", 
+                     "Keys: 1=Free 2=Building 3=City 4=Solar | Z=Zones | G=Grid C=Clear Q=Quit",
+                     "↑↓ = Change Height | H=Grid Snap | J=Show Grid"]
         for text in help_texts:
             self._draw_text(text, 10, y_offset, self.font_small, (200, 200, 200))
             y_offset += 25
         
+        # Zone selector overlay
+        if self.show_zone_selector:
+            self._draw_zone_selector()
+        
         glDisable(GL_BLEND)
+    
+    def _draw_zone_selector(self):
+        """Draw the zone selector overlay"""
+        # Semi-transparent backdrop
+        glColor4f(0, 0, 0, 0.7)
+        glBegin(GL_QUADS)
+        glVertex2f(0, 0)
+        glVertex2f(self.screen_width, 0)
+        glVertex2f(self.screen_width, self.screen_height)
+        glVertex2f(0, self.screen_height)
+        glEnd()
+        
+        # Main panel
+        panel_width = 650
+        panel_height = 550
+        panel_x = (self.screen_width - panel_width) / 2
+        panel_y = (self.screen_height - panel_height) / 2
+        
+        glColor4f(0.059, 0.090, 0.165, 0.95)
+        glBegin(GL_QUADS)
+        glVertex2f(panel_x, panel_y)
+        glVertex2f(panel_x + panel_width, panel_y)
+        glVertex2f(panel_x + panel_width, panel_y + panel_height)
+        glVertex2f(panel_x, panel_y + panel_height)
+        glEnd()
+        
+        # Panel border
+        glColor4f(0.22, 0.74, 0.97, 1.0)
+        glLineWidth(3)
+        glBegin(GL_LINE_LOOP)
+        glVertex2f(panel_x, panel_y)
+        glVertex2f(panel_x + panel_width, panel_y)
+        glVertex2f(panel_x + panel_width, panel_y + panel_height)
+        glVertex2f(panel_x, panel_y + panel_height)
+        glEnd()
+        
+        # Title
+        self._draw_text("SELECT ZONE TO TELEPORT", panel_x + 20, panel_y + 20, self.font, (56, 189, 248))
+        self._draw_text(f"Current: {config.ZONES[self.current_zone]['name']}", panel_x + 20, panel_y + 50, self.font_small, (34, 197, 94))
+        
+        # Zone colors matching the 3D world
+        zone_colors = {
+            'zone1': (0.3, 0.5, 0.9),   # Blue - Central Plaza
+            'zone2': (0.9, 0.5, 0.3),   # Orange - East District
+            'zone3': (0.5, 0.3, 0.9),   # Purple - West District
+            'zone4': (0.3, 0.9, 0.3),   # Green - North Park
+            'zone5': (0.9, 0.9, 0.3),   # Yellow - South Beach
+            'zone6': (0.9, 0.3, 0.3),   # Red - NE Industrial
+            'zone7': (0.3, 0.9, 0.9),   # Cyan - NW Residential
+            'zone8': (0.5, 0.9, 0.5),   # Light Green - SE Harbor
+            'zone9': (0.7, 0.5, 0.3)    # Brown - SW Mountain
+        }
+        
+        # Build zone buttons in 3x3 grid
+        self.zone_buttons = []
+        button_size = 180
+        button_spacing = 15
+        grid_start_x = panel_x + (panel_width - (button_size * 3 + button_spacing * 2)) / 2
+        grid_start_y = panel_y + 100
+        
+        # Zones arranged as they appear in 3D space
+        # zone7 (-25, 25)  zone4 (0, 25)  zone6 (25, 25)   <- North (top row)
+        # zone2 (-25, 0)   zone1 (0, 0)   zone3 (25, 0)    <- Center (middle row)
+        # zone9 (-25, -25) zone5 (0, -25) zone8 (25, -25)  <- South (bottom row)
+        zones_order = ['zone7', 'zone4', 'zone6',  # Top row (NW, North, NE)
+                      'zone2', 'zone1', 'zone3',  # Middle row (West, Central, East)
+                      'zone9', 'zone5', 'zone8']  # Bottom row (SW, South, SE)
+        
+        zone_icons = {
+            'zone1': '🏛️', 'zone2': '🏙️', 'zone3': '🌆',
+            'zone4': '🌳', 'zone5': '🏖️', 'zone6': '⚓',
+            'zone7': '🏘️', 'zone8': '🏭', 'zone9': '⛰️'
+        }
+        
+        for i, zone_id in enumerate(zones_order):
+            row = i // 3
+            col = i % 3
+            x = grid_start_x + col * (button_size + button_spacing)
+            y = grid_start_y + row * (button_size + button_spacing)
+            
+            zone_data = config.ZONES[zone_id]
+            is_current = zone_id == self.current_zone
+            is_hovered = self.hovered_button and self.hovered_button.get('value') == zone_id
+            zone_color = zone_colors.get(zone_id, (0.3, 0.3, 0.3))
+            
+            # Color indicator bar at top of button
+            glColor4f(*zone_color, 1.0)
+            glBegin(GL_QUADS)
+            glVertex2f(x, y)
+            glVertex2f(x + button_size, y)
+            glVertex2f(x + button_size, y + 25)
+            glVertex2f(x, y + 25)
+            glEnd()
+            
+            # Button background
+            if is_current:
+                bg_color = (0.22, 0.74, 0.97, 1.0)
+            elif is_hovered:
+                bg_color = (0.35, 0.40, 0.50, 1.0)
+            else:
+                bg_color = (0.118, 0.161, 0.231, 0.9)
+            
+            glColor4f(*bg_color)
+            glBegin(GL_QUADS)
+            glVertex2f(x, y + 25)
+            glVertex2f(x + button_size, y + 25)
+            glVertex2f(x + button_size, y + button_size)
+            glVertex2f(x, y + button_size)
+            glEnd()
+            
+            # Button border with zone color
+            glColor4f(*zone_color, 1.0)
+            glLineWidth(4 if is_current else 3)
+            glBegin(GL_LINE_LOOP)
+            glVertex2f(x, y)
+            glVertex2f(x + button_size, y)
+            glVertex2f(x + button_size, y + button_size)
+            glVertex2f(x, y + button_size)
+            glEnd()
+            
+            # Zone info
+            text_color = (0, 0, 0) if is_current else (255, 255, 255)
+            icon = zone_icons.get(zone_id, '📍')
+            self._draw_text(icon, x + button_size/2 - 15, y + 35, self.font, (255, 255, 255))
+            
+            # Zone name (split into multiple lines if too long)
+            name_parts = zone_data['name'].split()
+            if len(name_parts) > 1:
+                self._draw_text(name_parts[0], x + 10, y + 85, self.font_small, text_color)
+                self._draw_text(' '.join(name_parts[1:]), x + 10, y + 105, self.font_small, text_color)
+            else:
+                self._draw_text(zone_data['name'], x + 10, y + 95, self.font_small, text_color)
+            
+            # Count blocks in zone
+            blocks_count = sum(1 for b in self.blocks if b.get('zone') == zone_id)
+            count_text = f"{blocks_count} objects"
+            self._draw_text(count_text, x + 10, y + button_size - 30, self.font_tiny, text_color)
+            
+            # Add to clickable buttons
+            self.zone_buttons.append({
+                'rect': pygame.Rect(x, y, button_size, button_size),
+                'value': zone_id,
+                'type': 'zone'
+            })
+        
+        # Close instruction
+        self._draw_text("Press Z to close | Click zone to teleport", panel_x + 20, panel_y + panel_height - 30, self.font_small, (148, 163, 184))
     
     def _draw_text(self, text, x, y, font, color):
         """Helper to draw text using OpenGL"""
@@ -901,6 +1945,9 @@ class QuickStart3D:
                     elif event.key == K_c:
                         self.blocks.clear()
                         print("🗑️ Scene cleared")
+                    elif event.key == K_z:
+                        self.show_zone_selector = not self.show_zone_selector
+                        print(f"📍 Zone Selector: {'ON' if self.show_zone_selector else 'OFF'}")
                     elif event.key == K_1:
                         self.build_mode = 'free'
                         self._build_ui_buttons()
@@ -910,9 +1957,31 @@ class QuickStart3D:
                         self._build_ui_buttons()
                         print("🏗️ Building Mode")
                     elif event.key == K_3:
+                        self.build_mode = 'city'
+                        self._build_ui_buttons()
+                        print("🏙️ City Builder Mode")
+                    elif event.key == K_4:
                         self.build_mode = 'solar'
                         self._build_ui_buttons()
                         print("🌍 Solar System Mode")
+                    elif event.key == K_UP:
+                        # Increase height level
+                        if self.placement_height < self.max_height_level:
+                            self.placement_height += 1
+                            print(f"⬆️ Height Level: {self.placement_height} ({self.placement_height * self.grid_size}m)")
+                    elif event.key == K_DOWN:
+                        # Decrease height level
+                        if self.placement_height > 0:
+                            self.placement_height -= 1
+                            print(f"⬇️ Height Level: {self.placement_height} ({self.placement_height * self.grid_size}m)")
+                    elif event.key == K_h:
+                        # Toggle grid snapping
+                        self.snap_to_grid = not self.snap_to_grid
+                        print(f"🎯 Grid Snap: {'ON' if self.snap_to_grid else 'OFF'}")  
+                    elif event.key == K_j:
+                        # Toggle placement grid visibility
+                        self.show_placement_grid = not self.show_placement_grid
+                        print(f"🏛️ Placement Grid: {'ON' if self.show_placement_grid else 'OFF'}")
             
             ret, frame = self.cap.read()
             if not ret:

@@ -38,6 +38,7 @@ CAMERA_HEIGHT = 5
 BUILD_MODES = {
     'free': 'Free Build',
     'building': 'Building Blocks',
+    'city': 'City Builder',
     'solar': 'Solar System'
 }
 
@@ -51,6 +52,36 @@ BUILDING_PARTS = {
     'column': {'size': (0.4, 3, 0.4), 'color': (0.83, 0.83, 0.83), 'name': 'Column'},
     'stairs': {'size': (2, 1, 3), 'color': (0.66, 0.66, 0.66), 'name': 'Stairs'},
     'balcony': {'size': (3, 0.2, 1.5), 'color': (0.44, 0.50, 0.56), 'name': 'Balcony'}
+}
+
+# City Builder Assets
+CITY_ASSETS = {
+    'road': {'size': (5, 0.1, 2), 'color': (0.2, 0.2, 0.2), 'name': 'Road'},
+    'apartment': {'size': (3, 5, 3), 'color': (0.7, 0.7, 0.7), 'name': 'Apartment'},
+    'house': {'size': (2.5, 2.5, 2.5), 'color': (0.9, 0.75, 0.5), 'name': 'House'},
+    'skyscraper': {'size': (4, 8, 4), 'color': (0.3, 0.4, 0.5), 'name': 'Skyscraper'},
+    'shop': {'size': (2, 2, 2), 'color': (0.85, 0.45, 0.3), 'name': 'Shop'},
+    'streetlight': {'size': (0.2, 3, 0.2), 'color': (0.9, 0.9, 0.1), 'name': 'Street Light'},
+    'bench': {'size': (1.5, 0.5, 0.6), 'color': (0.4, 0.3, 0.2), 'name': 'Bench'},
+    'tree': {'size': (1, 3, 1), 'color': (0.13, 0.55, 0.13), 'name': 'Tree'},
+    'grass': {'size': (3, 0.05, 3), 'color': (0.2, 0.8, 0.2), 'name': 'Grass Patch'},
+    'fountain': {'size': (2, 1.5, 2), 'color': (0.4, 0.6, 0.9), 'name': 'Fountain'},
+    'car': {'size': (1.8, 1, 4), 'color': (0.8, 0.1, 0.1), 'name': 'Car'},
+    'person': {'size': (0.5, 1.7, 0.4), 'color': (0.9, 0.7, 0.5), 'name': 'Person'},
+    'sun': {'size': (3, 3, 3), 'color': (1.0, 0.9, 0.2), 'name': 'Sun'}
+}
+
+# Zone/Area Configuration
+ZONES = {
+    'zone1': {'position': (0, 0, 0), 'name': 'Central Plaza'},
+    'zone2': {'position': (25, 0, 0), 'name': 'East District'},
+    'zone3': {'position': (-25, 0, 0), 'name': 'West District'},
+    'zone4': {'position': (0, 0, 25), 'name': 'North Park'},
+    'zone5': {'position': (0, 0, -25), 'name': 'South Beach'},
+    'zone6': {'position': (25, 0, 25), 'name': 'NE Industrial'},
+    'zone7': {'position': (-25, 0, 25), 'name': 'NW Residential'},
+    'zone8': {'position': (25, 0, -25), 'name': 'SE Harbor'},
+    'zone9': {'position': (-25, 0, -25), 'name': 'SW Mountain'}
 }
 
 # Solar System Objects
